@@ -1,0 +1,115 @@
+name: Deploy PingFederate to AKS
+on:
+  push:
+    tags: pf-v**
+
+#Environment variables common accross all environments
+env:
+      WORKLOAD_TYPE: "deployment"
+      BASE_IMAGE_TAG: "2408"
+      BASE_IMAGE_REPOSITORY: "pingidentity-base-images/pingfederate"
+      PRODUCT_NAME: "pingfederate"
+      ACR_REGISTRY_NAME: "acrciamdevuanc67lyf"
+      ACR_REGISTRY_URL: "acrciamdevuanc67lyf.azurecr.io"
+
+jobs:
+  #Checkout Git Repository
+  Prepare-Environment:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout GitOps repository
+      uses: actions/checkout@v4
+
+  #Creates the docker image tag using the github release tag number + the base image tag of the ping product 
+  Create-Release-Tag: 
+    steps:
+    - name: Set Release Tag Variable using Github Release tag# and Base Image tag
+      id: set-image-tag
+      run: echo "RELEASE_TAG=${GITHUB_REF#refs/*/}-${BASE_IMAGE_TAG}" >> $GITHUB_ENV
+
+  #Build the ping image using az acr build
+  Build-Ping_image:
+    needs: Create-Release-Tag
+    steps:
+    - name: Build and push Ping Federate Docker image to ACR
+      run: .github/workflows/workflow-steps.sh build_ping_image
+
+  #Deploy to Dev Environment
+  Deploy-Dev:
+    runs-on: self-hosted
+    needs: [Prepare-Environment,Build-Ping_image]
+    environment: 'dev'
+   
+    env:
+      AZURE_IDENTITY: ${{ vars.AZURE_IDENTITY }}
+      AZURE_SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION }}
+      AZURE_AKS_CLUSTER_NAME: ${{ vars.AZURE_AKS_CLUSTER_NAME }}
+      AZURE_AKS_CLUSTER_RESOURCE_GROUP: ${{ vars.AZURE_AKS_CLUSTER_RESOURCE_GROUP }}
+      NAMESPACE: "ciam-dev"
+
+    steps:
+    - name: Deploy PingFederate to DEV
+      run: .github/workflows/workflow-steps.sh deploy_pingfederate
+
+    - name: Check PingFederate Deployment health
+      run: github/workflows/workflow-steps.sh post_deployment_healthcheck
+    
+  #Deploy to UAT Environment
+  Deploy-UAT:
+    runs-on: self-hosted
+    needs: [Prepare-Environment,Build-Ping_image,Deploy-Dev]
+    environment: 'uat'
+   
+    env:
+      AZURE_IDENTITY: ${{ vars.AZURE_IDENTITY }}
+      AZURE_SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION }}
+      AZURE_AKS_CLUSTER_NAME: ${{ vars.AZURE_AKS_CLUSTER_NAME }}
+      AZURE_AKS_CLUSTER_RESOURCE_GROUP: ${{ vars.AZURE_AKS_CLUSTER_RESOURCE_GROUP }}
+      NAMESPACE: "ciam-uat"
+
+    steps:
+    - name: Deploy PingFederate to UAT
+      run: .github/workflows/workflow-steps.sh deploy_pingfederate
+
+    - name: Check PingFederate Deployment health
+      run: github/workflows/workflow-steps.sh post_deployment_healthcheck
+
+  Deploy-Staging:
+    runs-on: self-hosted
+    needs: [Prepare-Environment,Build-Ping_image,Deploy-Dev,Deploy-UAT]
+    environment: 'staging'
+   
+    env:
+      AZURE_IDENTITY: ${{ vars.AZURE_IDENTITY }}
+      AZURE_SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION }}
+      AZURE_AKS_CLUSTER_NAME: ${{ vars.AZURE_AKS_CLUSTER_NAME }}
+      AZURE_AKS_CLUSTER_RESOURCE_GROUP: ${{ vars.AZURE_AKS_CLUSTER_RESOURCE_GROUP }}
+      NAMESPACE: "ciam-staging"
+
+    steps:
+    - name: Deploy PingFederate to staging
+      run: .github/workflows/workflow-steps.sh deploy_pingfederate
+
+    - name: Check PingFederate Deployment health
+      run: github/workflows/workflow-steps.sh post_deployment_healthcheck
+
+    #Deploy to Prod Environment
+  Deploy-PROD:
+    runs-on: self-hosted
+    needs: [Prepare-Environment,Build-Ping_image,Deploy-Dev,Deploy-UAT,Deploy-Staging]
+    environment: 'prod'
+
+    #Uses variables set under the prod environment created in the repo
+    env:
+      AZURE_IDENTITY: ${{ vars.AZURE_IDENTITY }}
+      AZURE_SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION }}
+      AZURE_AKS_CLUSTER_NAME: ${{ vars.AZURE_AKS_CLUSTER_NAME }}
+      AZURE_AKS_CLUSTER_RESOURCE_GROUP: ${{ vars.AZURE_AKS_CLUSTER_RESOURCE_GROUP }}
+      NAMESPACE: "ciam-prod"
+
+    steps:
+    - name: Deploy PingFederate to Prod
+      run: .github/workflows/workflow-steps.sh deploy_pingfederate
+
+    - name: Check PingFederate Deployment health
+      run: github/workflows/workflow-steps.sh post_deployment_healthcheck
